@@ -1,6 +1,6 @@
 // 部署配置：前端要连接的编排服务地址。
-// - 用 node server.js 本地访问（http://127.0.0.1:8787）时保持为空字符串（同源）。
-// - 前端部署在 GitHub Pages 等静态托管上时，改为本机或服务器的编排服务地址，例如：
-//     window.ORCHESTRATOR_URL = "http://127.0.0.1:8787";
-//   浏览器允许 https 页面请求 http://127.0.0.1（回环地址被视为安全上下文）。
-window.ORCHESTRATOR_URL = "";
+// 默认指向本机编排服务（node server.js，端口 8787）：
+// - 本地访问 http://127.0.0.1:8787 时同源等效；
+// - 部署在 GitHub Pages 等 https 页面上时，浏览器允许请求回环地址 http://127.0.0.1。
+// 以后若把编排服务部署到服务器，改成对应公网地址即可。
+window.ORCHESTRATOR_URL = "http://127.0.0.1:8787";
