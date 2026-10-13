@@ -1,0 +1,19 @@
+# 服务端私密配置（可含 API Key），绝不提交
+orchestrator/config.local.json
+
+# 业务知识库文档（你的企业资料，不公开；README.md 保留）
+orchestrator/knowledge/*
+!orchestrator/knowledge/README.md
+
+# Coze 导出的原始工作流草稿（含完整提示词设计，如需公开可删除下面两行）
+Chatflow-AI_PM_Business_Assistant-draft-1010/
+Chatflow-AI_PM_Business_Assistant-draft-1010.zip
+
+# 设计迭代产物（历史稿与截图）
+redesign/
+
+# 系统与编辑器杂项
+.DS_Store
+Thumbs.db
+*.log
+node_modules/

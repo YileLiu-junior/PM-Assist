@@ -1,0 +1,13 @@
+{
+  "说明": "把本文件改名为 config.local.json 后生效。API Key 也可以只在前端“连接设置”里填写（保存在浏览器本地），两边都不填则只能用 mock 通道。",
+  "providers": {
+    "deepseek": {
+      "apiKey": "",
+      "model": "deepseek-flash"
+    },
+    "zhipu": {
+      "apiKey": "",
+      "model": "glm-5.3-flash"
+    }
+  }
+}
