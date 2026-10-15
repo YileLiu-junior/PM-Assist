@@ -128,6 +128,146 @@ async function testConnection(credentials) {
   }
 }
 
+// ── 流式对话（行业分析工作台用）────────────────────────────────────
+// opts: {messages, temperature, maxTokens, timeoutMs(硬上限,默认600s), idleTimeoutMs(无数据超时,默认120s),
+//        signal, mockText(mock通道的固定输出), onDelta(chunk), onRollback(已发出字符数), onUsage({inputTokens,outputTokens})}
+// 返回 {text, finishReason, usage}
+// 断流重试：TypeError / 5xx / 429 / 流内 error → 通知 onRollback 后从头重试（退避 2.5s/5s，最多 2 次；429 等 10s）。
+// 用户主动 abort 不重试。回滚后由调用方把已渲染文本截断，避免内容重复。
+async function streamChat(credentials, opts) {
+  if (credentials.id === "mock") return mockStream(opts);
+
+  const maxAttempts = 3;
+  let sent = 0;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await streamOnce(credentials, opts, chunk => { sent += chunk.length; opts.onDelta?.(chunk); });
+    } catch (error) {
+      const status = error.status || 0;
+      const retriable = !opts.signal?.aborted && !error.cancelled
+        && (error.name === "TypeError" || error.isStreamError || status === 429 || (status >= 500 && status <= 599) || status === 529);
+      if (!retriable || attempt >= maxAttempts) throw error;
+      opts.onRollback?.(sent);
+      sent = 0;
+      await sleep(status === 429 ? 10000 : attempt * 2500);
+      if (opts.signal?.aborted) { const e = new Error("任务已取消。"); e.cancelled = true; throw e; }
+    }
+  }
+}
+
+async function streamOnce(credentials, opts, onDelta) {
+  const { meta } = credentials;
+  const controller = new AbortController();
+  const hardTimer = setTimeout(() => controller.abort(), opts.timeoutMs || 600000);
+  let idleTimer = null;
+  const armIdle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => controller.abort(), opts.idleTimeoutMs || 120000); };
+  const onExternalAbort = () => controller.abort();
+  if (opts.signal) opts.signal.addEventListener("abort", onExternalAbort);
+
+  const body = {
+    model: credentials.model,
+    messages: opts.messages,
+    max_tokens: opts.maxTokens || 8192,
+    stream: true,
+    stream_options: { include_usage: true }
+  };
+  if (typeof opts.temperature === "number") body.temperature = opts.temperature;
+
+  try {
+    let response = await fetch(meta.endpoint, {
+      method: "POST", signal: controller.signal,
+      headers: { "Authorization": `Bearer ${credentials.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    // 部分网关不认识可选参数，按错误信息逐项降级后重试一次
+    if (!response.ok && (response.status === 400 || response.status === 422)) {
+      let detail = await response.text().catch(() => "");
+      if (/stream_options/i.test(detail)) {
+        delete body.stream_options;
+        response = await fetch(meta.endpoint, {
+          method: "POST", signal: controller.signal,
+          headers: { "Authorization": `Bearer ${credentials.apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        if (!response.ok) detail = await response.text().catch(() => "");
+      }
+      if (!response.ok && (response.status === 400 || response.status === 422) && /max_tokens/i.test(detail)) {
+        body.max_tokens = Math.min(body.max_tokens, 4096);
+        response = await fetch(meta.endpoint, {
+          method: "POST", signal: controller.signal,
+          headers: { "Authorization": `Bearer ${credentials.apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+      }
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      let data = null;
+      try { data = JSON.parse(text); } catch { /* 保留原文，下面统一报错 */ }
+      const error = new Error(data?.error?.message || data?.message || text.slice(0, 300) || `HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "", full = "", finishReason = "stop", usage = null;
+    armIdle();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      armIdle();
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 1);
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") continue;
+        let data = null;
+        try { data = JSON.parse(payload); } catch { continue; }
+        if (data.error) { const e = new Error(data.error.message || "模型流内返回错误。"); e.isStreamError = true; throw e; }
+        const choice = data.choices?.[0];
+        const delta = choice?.delta?.content || "";
+        if (delta) onDelta(delta);
+        if (choice?.finish_reason) finishReason = choice.finish_reason;
+        if (data.usage) usage = { inputTokens: data.usage.prompt_tokens || 0, outputTokens: data.usage.completion_tokens || 0 };
+      }
+    }
+    if (!full.trim()) throw new Error("模型返回了空内容。");
+    return { text: full, finishReason, usage };
+  } catch (error) {
+    if (error.name === "AbortError") {
+      if (opts.signal?.aborted) { const e = new Error("任务已取消。"); e.cancelled = true; throw e; }
+      throw new Error("模型响应超时，请重试或更换模型。");
+    }
+    if (error.cause?.code === "ENOTFOUND" || error.cause?.code === "ECONNREFUSED") throw new Error(`无法访问 ${meta.label} 接口，请检查网络。`);
+    throw error;
+  } finally {
+    clearTimeout(hardTimer);
+    clearTimeout(idleTimer);
+    if (opts.signal) opts.signal.removeEventListener("abort", onExternalAbort);
+  }
+}
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+// Mock 流式：mockText 按 ~48 字符分块、24ms 间隔回调，模拟真实流式节奏
+async function mockStream(opts) {
+  const text = opts.mockText || "（Mock 流式输出）当前为离线测试内容。";
+  const inputTokens = Math.round(opts.messages.reduce((sum, m) => sum + (m.content || "").length, 0) * 0.62);
+  for (let i = 0; i < text.length; i += 48) {
+    if (opts.signal?.aborted) { const e = new Error("任务已取消。"); e.cancelled = true; throw e; }
+    await sleep(24);
+    opts.onDelta?.(text.slice(i, i + 48));
+  }
+  const outputTokens = Math.round(text.length * 0.62);
+  const usage = { inputTokens, outputTokens };
+  opts.onUsage?.(usage);
+  return { text, finishReason: "stop", usage };
+}
+
 // ── Mock 通道：按输入关键词模拟意图识别，返回固定交付物 ─────────
 function mockChat(opts) {
   const userText = opts.messages.filter(m => m.role === "user").map(m => m.content).join("\n");
@@ -183,4 +323,4 @@ function mockIntent(userText) {
   };
 }
 
-module.exports = { PROVIDERS, resolveCredentials, chat, testConnection };
+module.exports = { PROVIDERS, resolveCredentials, chat, streamChat, testConnection };

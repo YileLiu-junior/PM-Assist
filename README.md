@@ -1,8 +1,11 @@
 # AI 产品经理工作台
 
-把一个业务问题推进成可用交付物的前端工作台：需求分析、AI 方案设计、PRD 草稿、竞品分析四类任务路径，
+把一个业务问题推进成可用交付物的前端工作台：需求分析、AI 方案设计、PRD 草稿、竞品分析、行业分析五类任务路径，
 由**本地编排服务**复现完整的 Agent 工作流（意图识别 → 路由 → 分支生成 → 风险审校），
 支持 **DeepSeek** 和**智谱 BigModel** 两个模型通道，可插拔本地知识库。
+
+行业分析路径是一条独立的五步提示词链（边界切分 → 结构层 → 三条流转链 → 议价能力 → 约束/节奏/异常），
+流式生成**带 A/B/C 证据分级**的分析报告，可选「从业者拷问」聊天模式检验报告，详见 `industry-analysis-spec.md`。
 
 前端为零构建的原生 HTML/CSS/JS；编排服务为零依赖的 Node（≥18，内置 fetch）。
 
@@ -25,12 +28,14 @@ node server.js
 
 ```
 浏览器（index.html / app.js）
-   │  POST /api/run
+   │  POST /api/run              （四类业务路径）
+   │  POST /api/industry/stream  （行业分析路径，SSE 流式）
    ▼
-server.js ── orchestrator/flow.js     流程编排（对应 Coze Chatflow 的节点图）
-              ├─ prompts.js           全部系统提示词与参数（想调提示词改这里）
-              ├─ knowledge.js         本地知识库检索（topK=5）
-              └─ providers.js         DeepSeek / 智谱 / Mock 通道（OpenAI 兼容协议）
+server.js ── orchestrator/flow.js              流程编排（对应 Coze Chatflow 的节点图）
+              ├─ prompts.js                    四类业务路径的全部提示词（想调提示词改这里）
+              ├─ industry-prompts.js           行业分析五步链提示词 + Mock 文本
+              ├─ knowledge.js                  本地知识库检索（topK=5）
+              └─ providers.js                  DeepSeek / 智谱 / Mock 通道（OpenAI 兼容协议，含流式）
 ```
 
 主要接口：
@@ -38,6 +43,7 @@ server.js ── orchestrator/flow.js     流程编排（对应 Coze Chatflow �
 | 接口 | 说明 |
 | --- | --- |
 | `POST /api/run` | 执行完整流程，返回 `{kind, text, meta}` |
+| `POST /api/industry/stream` | 行业分析流式步骤（SSE：`delta` / `rollback` / `usage` / `done` / `error`） |
 | `POST /api/test` | 测试通道连通性 |
 | `GET /api/knowledge` | 知识库索引状态 |
 | `GET /api/health` | 服务与通道概览 |
@@ -61,5 +67,6 @@ GitHub Pages 只能托管静态前端，编排服务（Node）需要另行运行
 ## 测试
 
 ```bash
-node orchestrator/e2e-test.js   # 覆盖七条流程分支的端到端测试（需先启动 server.js）
+node orchestrator/e2e-test.js            # 四类业务路径七条分支的端到端测试（需先启动 server.js）
+node orchestrator/industry-smoke-test.js # 行业分析五步链 + 拷问模式的流式冒烟（Mock 通道）
 ```

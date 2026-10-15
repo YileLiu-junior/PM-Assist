@@ -9,14 +9,18 @@ const TASK_TYPES = {
   requirements: { label: "需求分析", kicker: "Understand the need", description: "把业务目标、用户问题和范围整理成可评审的需求依据。", placeholder: "例如：请分析售后流程中用户找不到进度、客服重复查询的问题，梳理目标与需求范围。" },
   solution: { label: "AI 方案设计", kicker: "Design the approach", description: "围绕目标用户和约束，形成可讨论的 AI 产品方案与 MVP 边界。", placeholder: "例如：请为 AI 客服 MVP 设计方案，说明能力边界、关键流程和人工接管机制。" },
   prd: { label: "PRD 草稿", kicker: "Make it buildable", description: "把已经明确的想法整理成产品、流程和验收都能继续使用的 PRD 草稿。", placeholder: "例如：请为订单查询功能输出 PRD 草稿，包含用户流程、异常处理和验收标准。" },
-  competitor: { label: "竞品分析", kicker: "See the landscape", description: "整理竞品观察维度与对比框架，区分已知资料和待验证判断。", placeholder: "例如：请分析 AI 客服竞品在订单查询、售后转人工和知识库方面的差异。" }
+  competitor: { label: "竞品分析", kicker: "See the landscape", description: "整理竞品观察维度与对比框架，区分已知资料和待验证判断。", placeholder: "例如：请分析 AI 客服竞品在订单查询、售后转人工和知识库方面的差异。" },
+  industry: { label: "行业分析", kicker: "Know the field", description: "输入一个行业名称。同一名称可能指向几条完全不同的产业链，工作流会先请你确认分析边界，再依次生成结构层、三条流转链、议价能力和约束节奏，字段带 A / B / C 证据分级。", placeholder: "例如：智能客服 / 即饮咖啡 / 跨境电商代运营" }
 };
 
 const SAMPLE_TASKS = [
   { label: "售后流程需求分析", type: "requirements", text: "请分析零售电商售后流程中用户找不到处理进度、客服重复查询的问题，梳理目标、用户需求、范围和待确认事项。" },
   { label: "AI 客服 MVP 方案", type: "solution", text: "请为零售电商设计一个 AI 客服 MVP 方案，聚焦商品问答与订单状态查询，说明核心流程、能力边界和人工接管机制。" },
   { label: "订单查询 PRD", type: "prd", text: "请为订单状态查询功能输出 PRD 草稿，包含用户流程、状态展示、异常处理、权限要求和验收标准。" },
-  { label: "AI 客服竞品分析", type: "competitor", text: "请搭建 AI 客服竞品分析框架，重点比较商品问答、订单查询、售后服务、知识库和人工协同能力。" }
+  { label: "AI 客服竞品分析", type: "competitor", text: "请搭建 AI 客服竞品分析框架，重点比较商品问答、订单查询、售后服务、知识库和人工协同能力。" },
+  { label: "智能客服", type: "industry", text: "智能客服" },
+  { label: "即饮咖啡", type: "industry", text: "即饮咖啡" },
+  { label: "跨境电商代运营", type: "industry", text: "跨境电商代运营" }
 ];
 
 const DEMO_BODY = `# 零售 AI 客服 MVP：需求分析
@@ -88,7 +92,8 @@ const ICONS = {
   file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4.5 4.5L19 7"/></svg>',
-  alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 4 8 15H4L12 4Z"/><path d="M12 9v4M12 16h.01"/></svg>'
+  alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 4 8 15H4L12 4Z"/><path d="M12 9v4M12 16h.01"/></svg>',
+  trend: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M5 20V9"/><path d="M12 20V4"/><path d="M19 20v-7"/></svg>'
 };
 
 let state = loadState();
@@ -142,12 +147,36 @@ function loadState() {
       const saved = JSON.parse(raw);
       // 旧版本存的是 Coze workflowId + PAT，直接作废
       if (saved.settings && !saved.settings.provider) saved.settings = { provider: "", apiKey: "", model: "" };
-      if (saved.projects?.length) return { ...createDemoState(), ...saved, modal: null, evidenceOpen: false, editing: null };
+      if (saved.projects?.length) return normalizeLoadedState({ ...createDemoState(), ...saved, modal: null, evidenceOpen: false, editing: null });
     }
   } catch (error) { console.warn("Unable to load saved workspace", error); }
   const initial = createDemoState();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
   return initial;
+}
+
+// 刷新/关闭页面会打断进行中的流式运行：把行业分析任务恢复到可重试的干净状态
+function normalizeLoadedState(state) {
+  for (const project of state.projects || []) {
+    for (const task of project.tasks || []) {
+      const ind = task.industry;
+      if (!ind) continue;
+      if (ind.phase === "s0" || ind.phase === "running") {
+        const step = ind.steps?.[ind.activeStep ?? 0];
+        if (step && step.status === "running") step.status = "stopped";
+        ind.phase = "paused";
+        ind.railMessage = "页面刷新中断了本次运行。可重试中断的那一步并继续，已完成的内容都在。";
+      }
+      if (ind.interview?.streaming) {
+        ind.interview.streaming = false;
+        const last = ind.interview.messages?.at(-1);
+        if (last?.role === "assistant" && !last.content.trim()) ind.interview.messages.pop();
+        if (task.status === "running") task.status = "completed";
+      }
+    }
+  }
+  if (state.run?.type === "industry") state.run = null;
+  return state;
 }
 
 function renderIcon(name) { return ICONS[name] || ""; }
@@ -170,7 +199,7 @@ function connectionClass() { return state.connectionStatus === "connected" ? "co
 function taskStatusLabel(status) {
   return { completed: "已完成", running: "进行中", needs_input: "待补充", guidance: "请选择方向", risk: "需确认", failed: "失败", cancelled: "已取消", no_result: "无有效结果" }[status] || "未开始";
 }
-function taskIcon(type) { return type === "smart" ? "spark" : "file"; }
+function taskIcon(type) { return type === "smart" ? "spark" : type === "industry" ? "trend" : "file"; }
 function projectMatches(project) {
   const query = state.search.trim().toLowerCase();
   if (!query) return true;
@@ -196,7 +225,11 @@ function renderSidebar(project) {
 }
 
 function renderTopbar(project) {
-  return `<header class="topbar"><button class="mobile-menu" data-action="toggle-sidebar" aria-label="打开项目区">${renderIcon("menu")}</button><div class="topbar-project"><div class="eyebrow">当前项目</div><div class="topbar-title"><h1>${escapeHTML(project?.name || "还没有项目")}</h1><span class="connection-status ${connectionClass()}">${connectionLabel()}</span></div></div><div class="top-actions"><button class="button" data-action="settings">${renderIcon("settings")}连接设置</button><button class="button" data-action="help">${renderIcon("help")}帮助</button><button class="button primary" data-action="new-project">${renderIcon("plus")}新建项目</button></div></header>`;
+  const industry = industryTask();
+  const showIndustry = industry && industry.industry.steps.some(step => step);
+  const fmt = value => (value || 0).toLocaleString("zh-CN");
+  const industryControls = showIndustry ? `<span class="token-pill">tokens <b id="industryTokenTotal">${fmt(industry.industry.tokens.in + industry.industry.tokens.out)}</b>（入 <b id="industryTokenIn">${fmt(industry.industry.tokens.in)}</b> / 出 <b id="industryTokenOut">${fmt(industry.industry.tokens.out)}</b>）</span>${state.run?.type === "industry" ? `<button class="button danger" data-action="cancel-run">${renderIcon("x")}停止</button>` : ""}<button class="button" data-action="export-industry">${renderIcon("save")}导出 .md</button>` : "";
+  return `<header class="topbar"><button class="mobile-menu" data-action="toggle-sidebar" aria-label="打开项目区">${renderIcon("menu")}</button><div class="topbar-project"><div class="eyebrow">当前项目</div><div class="topbar-title"><h1>${escapeHTML(project?.name || "还没有项目")}</h1><span class="connection-status ${connectionClass()}">${connectionLabel()}</span></div></div><div class="top-actions">${industryControls}<button class="button" data-action="settings">${renderIcon("settings")}连接设置</button><button class="button" data-action="help">${renderIcon("help")}帮助</button><button class="button primary" data-action="new-project">${renderIcon("plus")}新建项目</button></div></header>`;
 }
 
 function renderContext(project) {
@@ -204,7 +237,8 @@ function renderContext(project) {
 }
 
 function renderPaths() {
-  const paths = ["requirements", "solution", "prd", "competitor"].map(type => `<button class="task-path ${selectedType() === type ? "active" : ""}" data-action="select-type" data-type="${type}"><small>${escapeHTML(TASK_TYPES[type].kicker)}</small><strong>${TASK_TYPES[type].label}</strong><span class="path-mark">0${["requirements", "solution", "prd", "competitor"].indexOf(type) + 1}</span></button>`).join("");
+  const order = ["requirements", "solution", "prd", "competitor", "industry"];
+  const paths = order.map(type => `<button class="task-path ${selectedType() === type ? "active" : ""}" data-action="select-type" data-type="${type}"><small>${escapeHTML(TASK_TYPES[type].kicker)}</small><strong>${TASK_TYPES[type].label}</strong><span class="path-mark">0${order.indexOf(type) + 1}</span></button>`).join("");
   return `<section><div class="section-kicker">Work paths</div><div class="section-title" style="display:none">任务路径</div><div class="task-paths"><button class="task-path smart ${selectedType() === "smart" ? "active" : ""}" data-action="select-type" data-type="smart"><small>${TASK_TYPES.smart.kicker}</small><strong>${TASK_TYPES.smart.label}</strong><span class="path-mark">✦</span></button>${paths}</div></section>`;
 }
 
@@ -213,11 +247,14 @@ function renderComposer(project) {
   const meta = TASK_TYPES[type];
   const isRunning = Boolean(state.run);
   const input = state.run?.input ?? state.draftInput ?? "";
-  return `<section class="composer" id="composer"><div class="composer-top"><div><div class="section-kicker">${escapeHTML(meta.kicker)}</div><h2>${escapeHTML(meta.label)}</h2><p class="composer-lede">${escapeHTML(meta.description)}</p></div><div class="type-tag">当前任务 · ${escapeHTML(meta.label)}</div></div><div class="input-wrap"><textarea id="taskInput" maxlength="5000" ${isRunning ? "disabled" : ""} placeholder="${escapeHTML(meta.placeholder)}">${escapeHTML(input)}</textarea><span class="char-count" id="charCount">${input.length.toLocaleString("zh-CN")} / 5,000</span></div><div class="privacy-note">${renderIcon("shield")}请勿输入未经授权的个人信息、商业秘密或生产凭证。</div><div class="composer-footer"><div class="examples"><span class="examples-label">试试：</span>${SAMPLE_TASKS.map(sample => `<button class="example-button" data-action="use-example" data-example="${SAMPLE_TASKS.indexOf(sample)}">${escapeHTML(sample.label)}</button>`).join("")}</div><div class="composer-actions"><button class="button" data-action="clear-input" ${isRunning ? "disabled" : ""}>清空</button>${isRunning ? `<button class="button danger" data-action="cancel-run">${renderIcon("x")}取消运行</button>` : `<button class="button primary" data-action="start-analysis">${renderIcon("spark")}开始分析</button>`}</div></div></section>`;
+  const maxLen = type === "industry" ? INDUSTRY_INPUT_MAX : 5000;
+  // 智能识别展示四类业务示例；具体路径只展示与自己同类的示例
+  const samples = SAMPLE_TASKS.filter(sample => type === "smart" ? sample.type !== "industry" : sample.type === type);
+  return `<section class="composer" id="composer"><div class="composer-top"><div><div class="section-kicker">${escapeHTML(meta.kicker)}</div><h2>${escapeHTML(meta.label)}</h2><p class="composer-lede">${escapeHTML(meta.description)}</p></div><div class="type-tag">当前任务 · ${escapeHTML(meta.label)}</div></div><div class="input-wrap"><textarea id="taskInput" maxlength="${maxLen}" ${isRunning ? "disabled" : ""} placeholder="${escapeHTML(meta.placeholder)}">${escapeHTML(input)}</textarea><span class="char-count" id="charCount">${input.length.toLocaleString("zh-CN")} / ${maxLen.toLocaleString("zh-CN")}</span></div><div class="privacy-note">${renderIcon("shield")}请勿输入未经授权的个人信息、商业秘密或生产凭证。</div><div class="composer-footer"><div class="examples"><span class="examples-label">试试：</span>${samples.map(sample => `<button class="example-button" data-action="use-example" data-example="${SAMPLE_TASKS.indexOf(sample)}">${escapeHTML(sample.label)}</button>`).join("")}</div><div class="composer-actions"><button class="button" data-action="clear-input" ${isRunning ? "disabled" : ""}>清空</button>${isRunning ? `<button class="button danger" data-action="cancel-run">${renderIcon("x")}取消运行</button>` : `<button class="button primary" data-action="start-analysis">${renderIcon("spark")}开始分析</button>`}</div></div></section>`;
 }
 
 function renderRunPanel() {
-  if (!state.run) return "";
+  if (!state.run || state.run.type === "industry") return "";
   const steps = ["理解任务", "整理资料", "生成交付物", "风险与事实检查"];
   const currentStep = state.run.step;
   return `<section class="run-panel"><div class="run-heading"><h2>${state.run.status === "running" ? "任务正在进行" : escapeHTML(state.run.statusLabel || "任务状态")}</h2><span class="run-timer">${state.run.startedAt ? formatDate(state.run.startedAt) : "刚刚"}</span></div><div class="run-steps">${steps.map((step, index) => `<div class="run-step ${index < currentStep ? "done" : index === currentStep ? "active" : ""}"><div class="run-step-index">0${index + 1}</div><div class="run-step-name">${step}</div></div>`).join("")}</div><div class="run-message">${escapeHTML(state.run.message || "正在准备任务…")}</div></section>`;
@@ -227,29 +264,43 @@ function renderDocumentBody(body) {
   const lines = String(body || "").replace(/\r/g, "").split("\n");
   let html = "", inUl = false, inOl = false, inTable = false;
   const closeLists = () => { if (inUl) { html += "</ul>"; inUl = false; } if (inOl) { html += "</ol>"; inOl = false; } };
-  const inline = text => escapeHTML(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`(.+?)`/g, "<code>$1</code>");
+  const closeTable = () => { if (inTable) { html += "</tbody></table></div>"; inTable = false; } };
+  // 证据分级 chip：[[A|出处]] / [[B|推断要点]] / [[C]] / [[未获取]]
+  const evidenceChip = (_, grade, label) => {
+    if (grade === "未获取") return `<span class="ev ev-n" title="没有可靠依据，需人工补充"><i>?</i>未获取</span>`;
+    const cls = { A: "ev-a", B: "ev-b", C: "ev-c" }[grade] || "ev-n";
+    const fallback = { A: "公开可查", B: "推断", C: "推测" }[grade];
+    return `<span class="ev ${cls}"${label ? ` title="${escapeHTML(label)}"` : ""}><i>${grade}</i>${escapeHTML(label || fallback)}</span>`;
+  };
+  const inline = text => escapeHTML(text)
+    .replace(/\\\|/g, "|")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`(.+?)`/g, "<code>$1</code>")
+    .replace(/\[\[(A|B|C|未获取)(?:\|([^\]]*))?\]\]/g, evidenceChip);
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index].trim();
-    if (!line) { closeLists(); if (inTable) { html += "</tbody></table>"; inTable = false; } continue; }
+    if (!line) { closeLists(); closeTable(); continue; }
     if (line.startsWith("|") && line.endsWith("|")) {
-      const cells = line.slice(1, -1).split("|").map(cell => cell.trim());
+      // 单元格内的转义竖线（\|）先占位再还原，避免切断内容
+      const cells = line.slice(1, -1).replace(/\\\|/g, "\u0001").split("|").map(cell => cell.trim().replace(/\u0001/g, "|"));
       if (/^\s*:?-+:?\s*$/.test(cells[0] || "")) continue;
       closeLists();
-      if (!inTable) { html += "<table><thead><tr>" + cells.map(cell => `<th>${inline(cell)}</th>`).join("") + "</tr></thead><tbody>"; inTable = true; }
+      if (!inTable) { html += '<div class="table-scroll"><table><thead><tr>' + cells.map(cell => `<th>${inline(cell)}</th>`).join("") + "</tr></thead><tbody>"; inTable = true; }
       else html += "<tr>" + cells.map(cell => `<td>${inline(cell)}</td>`).join("") + "</tr>";
       continue;
     }
-    if (inTable) { html += "</tbody></table>"; inTable = false; }
-    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    closeTable();
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
     if (heading) { closeLists(); const level = heading[1].length; html += `<h${level}>${inline(heading[2])}</h${level}>`; continue; }
     if (line.startsWith(">")) { closeLists(); html += `<blockquote>${inline(line.slice(1).trim())}</blockquote>`; continue; }
     const bullet = line.match(/^[-*]\s+(.+)$/);
     if (bullet) { if (!inUl) { closeLists(); html += "<ul>"; inUl = true; } html += `<li>${inline(bullet[1])}</li>`; continue; }
-    const numbered = line.match(/^\d+[.)]\s+(.+)$/);
-    if (numbered) { if (!inOl) { closeLists(); html += "<ol>"; inOl = true; } html += `<li>${inline(numbered[1])}</li>`; continue; }
+    const numbered = line.match(/^(\d+)[.)]\s+(.+)$/);
+    // 有序列表保留模型输出的原始序号：列表项之间常隔空行导致列表被切开，靠 value 防止每项都显示成 1.
+    if (numbered) { if (!inOl) { closeLists(); html += "<ol>"; inOl = true; } html += `<li value="${numbered[1]}">${inline(numbered[2])}</li>`; continue; }
     closeLists(); html += `<p>${inline(line)}</p>`;
   }
-  closeLists(); if (inTable) html += "</tbody></table>";
+  closeLists(); closeTable();
   return html || `<p class="muted">没有可展示的正文。</p>`;
 }
 
@@ -268,6 +319,7 @@ function renderStatePanel(task) {
 }
 
 function renderResult(task, project) {
+  if (task.type === "industry") return renderIndustry(task);
   const version = currentVersion(task);
   if (!version || !["completed", "risk"].includes(task.status)) return renderStatePanel(task);
   const editing = state.editing && state.editing.taskId === task.id && state.editing.versionId === version.id;
@@ -285,6 +337,477 @@ function renderEvidence(task) {
   const groups = ["facts", "sources", "suggestions", "assumptions", "risks"];
   const labels = { facts: "已确认事实", sources: "资料支持", suggestions: "分析建议", assumptions: "待验证假设", risks: "风险与人工确认点" };
   return `<div class="evidence-drawer ${state.evidenceOpen ? "open" : ""}"><div class="evidence-backdrop" data-action="close-evidence"></div><aside class="evidence-panel" aria-label="证据与假设"><div class="drawer-header"><div><div class="section-kicker">Evidence desk</div><h2>证据与假设</h2><p>${version ? `${escapeHTML(TASK_TYPES[version.type]?.label || "交付物")} · ${formatDate(version.generatedAt)}` : "当前没有可查看的交付物"}</p></div><button class="icon-button" data-action="close-evidence" aria-label="关闭证据区域">${renderIcon("x")}</button></div>${groups.map(group => `<section class="evidence-group"><h3>${labels[group]}</h3>${version?.evidence?.[group]?.length ? `<ul>${version.evidence[group].map(item => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : `<div class="evidence-empty">工作流没有返回这一类内容，请人工补充或验证。</div>`}</section>`).join("")}</aside></div>`;
+}
+
+/* ============================================================
+   行业分析工作台（第 6 条任务路径）
+   提示词保存在编排服务端（orchestrator/industry-prompts.js）；
+   前端只保存进度状态（边界、各步正文、拷问记录），每步请求由
+   服务端重建完整消息序列。见 industry-analysis-spec.md。
+   ============================================================ */
+const INDUSTRY_INPUT_MAX = 100;
+const INDUSTRY_INTERVIEW_SENTINEL = "[[INDUSTRY_INTERVIEW_START]]";
+const INDUSTRY_INTERVIEW_DIAGNOSTIC_SENTINEL = "[[INDUSTRY_INTERVIEW_DIAGNOSTIC]]";
+const INDUSTRY_INTERVIEW_MAX_ROUNDS = 15;
+const INDUSTRY_RAIL_STEPS = ["边界切分", "结构层", "三条流转链", "议价能力", "约束与节奏", "从业者拷问"];
+const INDUSTRY_CARDS = [
+  { kicker: "STEP 0 · 边界切分", title: null },
+  { kicker: "STEP 1 · 结构层", title: "产业链分层" },
+  { kicker: "STEP 2 · 三条流转链", title: "钱流 / 货流 / 用户流 与错位" },
+  { kicker: "STEP 3 · 议价能力", title: "五个可以被验证的问题" },
+  { kicker: "STEP 4 · 约束 / 节奏 / 异常", title: "外行看不见的线，与你还不知道的 10 件事" }
+];
+const INDUSTRY_STATUS_LABELS = { pending: "排队中", running: "生成中", done: "已完成", awaiting: "等待选择边界", stopped: "已停止", failed: "失败" };
+
+let industryController = null;
+let industryRenderQueued = false;
+let industryTimerHandle = null;
+
+function freshIndustry(name) {
+  return {
+    industryName: name, boundary: "", candidates: [],
+    steps: [null, null, null, null, null],
+    phase: "s0", activeStep: 0, tokens: { in: 0, out: 0 },
+    startedAt: now(),
+    railMessage: "Step 0 · 边界切分：正在识别同名行业…",
+    interview: { open: false, rounds: 0, finished: false, streaming: false, messages: [] }
+  };
+}
+
+function industryTask() { const task = currentTask(); return task && task.type === "industry" && task.industry ? task : null; }
+
+function industryRailState(ind, index) {
+  if (index === 5) {
+    if (ind.interview.finished) return "done";
+    return ind.phase === "interview" ? "active" : "";
+  }
+  const step = ind.steps[index];
+  if (!step) return "";
+  if (step.status === "running") return "active";
+  if (step.status === "done") return "done";
+  if (step.status === "awaiting" || step.status === "stopped") return "paused";
+  if (step.status === "failed") return "failed";
+  return "";
+}
+
+function industryTimerText(ind) {
+  if (!ind.startedAt) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(ind.startedAt).getTime()) / 1000));
+  const text = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  return ["done", "paused"].includes(ind.phase) ? `用时 ${text}` : `已用时 ${text}`;
+}
+
+function startIndustryTimer() {
+  stopIndustryTimer();
+  industryTimerHandle = setInterval(() => {
+    const task = industryTask();
+    const el = document.getElementById("industryTimer");
+    if (task && el) el.textContent = industryTimerText(task.industry);
+    else stopIndustryTimer();
+  }, 1000);
+}
+function stopIndustryTimer() { clearInterval(industryTimerHandle); industryTimerHandle = null; }
+
+function parseIndustryCandidates(text) {
+  const rows = String(text || "").split("\n")
+    .filter(line => line.trim().startsWith("|") && line.trim().endsWith("|"))
+    .map(line => line.trim().slice(1, -1).replace(/\\\|/g, "\u0001").split("|").map(cell => cell.trim().replace(/\u0001/g, "|")));
+  const headerIndex = rows.findIndex(cells => cells[0] === "候选");
+  if (headerIndex < 0) return [];
+  const candidates = [];
+  for (const cells of rows.slice(headerIndex + 1)) {
+    if (!cells[0] || /^:?-{3,}:?$/.test(cells[0]) || cells.length < 2) continue;
+    const title = /^候选/.test(cells[0]) ? cells[0] : `候选${cells[0]}`;
+    const include = cells[1] || "（见表）";
+    const exclude = cells[2] || "（见表）";
+    candidates.push({
+      title,
+      detail: `包含：${include}。不包含：${exclude}。典型玩家：${cells[3] || "—"}`,
+      choice: `${title}：包含${include}；不包含${exclude}`
+    });
+  }
+  return candidates;
+}
+
+function renderIndustryRail(ind) {
+  return `<section class="run-panel on" id="industryRail"><div class="run-heading"><h2>行业分析 · ${escapeHTML(ind.industryName)}</h2><span class="run-timer" id="industryTimer">${industryTimerText(ind)}</span></div><div class="run-steps">${INDUSTRY_RAIL_STEPS.map((name, index) => `<div class="run-step ${index === 5 ? "optional" : ""} ${industryRailState(ind, index)}" id="industryRailStep${index}"><div class="run-step-index">0${index + 1}</div><div class="run-step-name">${name}</div></div>`).join("")}</div><div class="run-message" id="industryRailMessage">${escapeHTML(ind.railMessage || "")}</div></section>`;
+}
+
+function renderBoundaryChooser(ind) {
+  if (ind.phase !== "awaiting") return "";
+  const customRow = `<div class="boundary-custom"><input id="industryCustomBoundary" maxlength="200" placeholder="自定义边界或交叉组合，如「一 + 二」" /><button class="button small primary" data-action="industry-confirm-custom">确认边界</button></div>`;
+  if (!ind.candidates.length) {
+    return `<div style="padding:0 34px 26px"><div class="followup-panel" style="margin:0 0 12px">候选边界解析失败，请参考上方正文，直接输入自定义边界。</div>${customRow}</div>`;
+  }
+  return `<div style="padding:0 34px 26px"><div class="candidate-list">${ind.candidates.map((candidate, index) => `<button class="candidate-row" data-action="industry-choose-candidate" data-candidate="${index}"><span class="candidate-mark">${["一", "二", "三", "四"][index] || index + 1}</span><span class="candidate-info"><strong>${escapeHTML(candidate.title)}</strong><span>${escapeHTML(candidate.detail)}</span></span></button>`).join("")}</div>${customRow}</div>`;
+}
+
+function renderIndustryStepCard(ind, index) {
+  const card = INDUSTRY_CARDS[index];
+  const step = ind.steps[index];
+  const status = step?.status || "pending";
+  const title = index === 0 ? `「${escapeHTML(ind.industryName)}」可能指这几个行业` : card.title;
+  const retryable = status === "failed" || status === "stopped";
+  const notes = { 0: "边界决定后面四步的分析对象，选定后自动继续。", 4: "本步内容默认为推测档，逐条给出验证方法，不许当结论使用。" };
+  const body = step ? renderDocumentBody(step.text) + (status === "running" ? '<p style="color:var(--faint)">▍</p>' : "") : "";
+  return `<article class="industry-step ${step ? "on" : ""}" id="industryCard${index}"><div class="step-head"><div><div class="section-kicker">${card.kicker}</div><h2>${title}</h2></div><div class="step-side"><span class="step-status ${status}" id="industryStatus${index}">${INDUSTRY_STATUS_LABELS[status] || ""}</span><span class="step-tokens" id="industryStepTokens${index}">${step?.tokens ? `${step.tokens.toLocaleString("zh-CN")} tok` : ""}</span></div></div><div class="step-body document-body" id="industryBody${index}">${body}</div>${index === 0 ? renderBoundaryChooser(ind) : ""}<div class="step-footer"><span>${notes[index] || ""}</span><div class="step-footer-actions">${retryable ? `<button class="button small" data-action="retry-industry-step" data-step="${index}">${renderIcon("refresh")}重试本步并继续</button>` : ""}</div></div></article>`;
+}
+
+function renderChatMessages(chat) {
+  return chat.messages
+    .filter(message => !message.hidden && message.content !== INDUSTRY_INTERVIEW_SENTINEL)
+    .map(message => message.role === "user"
+      ? `<div class="chat-msg user"><span class="who"><b>你</b></span>${escapeHTML(message.content).replace(/\n/g, "<br>")}</div>`
+      : `<div class="chat-msg"><span class="who"><b>模型 · 内行</b></span>${renderDocumentBody(message.content)}</div>`)
+    .join("");
+}
+
+function renderInterviewCard(ind) {
+  const chat = ind.interview;
+  if (!(chat.open || ind.phase === "done" || ind.phase === "interview")) return "";
+  const canChat = chat.open && !chat.streaming && !chat.finished;
+  const statusLabel = chat.finished ? "已完成" : chat.open ? "进行中" : "待进入";
+  const round = Math.min(chat.rounds, INDUSTRY_INTERVIEW_MAX_ROUNDS);
+  return `<article class="industry-step on" id="industryCard5"><div class="step-head"><div><div class="section-kicker">STEP 5 · 从业者拷问（可选）</div><h2>让内行检验这份报告</h2></div><div class="step-side"><span class="step-status ${chat.finished ? "done" : chat.open ? "running" : "awaiting"}">${statusLabel}</span></div></div><div class="chat-body">${chat.open ? "" : `<div class="chat-intro"><span>模型扮演从业 12 年的内行，专挑报告里 <strong>B / C 档</strong> 和「未获取」的字段反问你，一次最多说三句话。${INDUSTRY_INTERVIEW_MAX_ROUNDS} 轮后跳出角色，给出报告哪里是空的一张诊断。</span><button class="button primary" data-action="industry-start-interview">${renderIcon("spark")}进入拷问模式</button></div>`}<div class="chat-stream" id="industryChatStream">${chat.open ? renderChatMessages(chat) : ""}</div>${chat.open ? `<div class="chat-input-row"><input id="industryChatInput" ${canChat ? "" : "disabled"} placeholder="${chat.finished ? "拷问已结束，诊断会随全文一起导出" : `回答内行的问题（第 ${round + 1} 轮），回车发送…`}" /><span class="round-pill" id="industryRoundPill">第 ${round} / ${INDUSTRY_INTERVIEW_MAX_ROUNDS} 轮</span><button class="button small primary" data-action="industry-send-chat" ${canChat ? "" : "disabled"}>发送</button></div>` : ""}</div></article>`;
+}
+
+function renderIndustry(task) {
+  const ind = task.industry;
+  if (!ind) return renderStatePanel(task);
+  return `${renderIndustryRail(ind)}${INDUSTRY_CARDS.map((card, index) => renderIndustryStepCard(ind, index)).join("")}${renderInterviewCard(ind)}`;
+}
+
+// 流式期间按帧补丁更新已渲染的 DOM，不做整页重渲染（避免输入框失焦与抖动）
+function queueIndustryPatch() {
+  if (industryRenderQueued) return;
+  industryRenderQueued = true;
+  requestAnimationFrame(() => { industryRenderQueued = false; patchIndustryView(); });
+}
+
+function patchIndustryView() {
+  const task = industryTask();
+  if (!task) return;
+  const ind = task.industry;
+  for (let index = 0; index < 5; index += 1) {
+    const step = ind.steps[index];
+    if (!step) continue;
+    const card = document.getElementById(`industryCard${index}`);
+    if (card && !card.classList.contains("on")) card.classList.add("on");
+    const body = document.getElementById(`industryBody${index}`);
+    if (body) {
+      const signature = `${step.text.length}:${step.status}`;
+      if (body.dataset.rendered !== signature) {
+        body.innerHTML = renderDocumentBody(step.text) + (step.status === "running" ? '<p style="color:var(--faint)">▍</p>' : "");
+        body.dataset.rendered = signature;
+      }
+    }
+    const statusEl = document.getElementById(`industryStatus${index}`);
+    if (statusEl) { statusEl.className = `step-status ${step.status}`; statusEl.textContent = INDUSTRY_STATUS_LABELS[step.status] || ""; }
+    const tokensEl = document.getElementById(`industryStepTokens${index}`);
+    if (tokensEl) tokensEl.textContent = step.tokens ? `${step.tokens.toLocaleString("zh-CN")} tok` : "";
+  }
+  for (let index = 0; index < 6; index += 1) {
+    const railEl = document.getElementById(`industryRailStep${index}`);
+    if (railEl) railEl.className = `run-step ${index === 5 ? "optional" : ""} ${industryRailState(ind, index)}`;
+  }
+  const message = document.getElementById("industryRailMessage");
+  if (message) message.textContent = ind.railMessage || "";
+  const timer = document.getElementById("industryTimer");
+  if (timer) timer.textContent = industryTimerText(ind);
+  const fmt = value => (value || 0).toLocaleString("zh-CN");
+  const total = document.getElementById("industryTokenTotal");
+  if (total) total.textContent = fmt(ind.tokens.in + ind.tokens.out);
+  const input = document.getElementById("industryTokenIn");
+  if (input) input.textContent = fmt(ind.tokens.in);
+  const output = document.getElementById("industryTokenOut");
+  if (output) output.textContent = fmt(ind.tokens.out);
+  if (ind.interview.open) {
+    const stream = document.getElementById("industryChatStream");
+    if (stream) stream.innerHTML = renderChatMessages(ind.interview);
+    const pill = document.getElementById("industryRoundPill");
+    if (pill) pill.textContent = `第 ${Math.min(ind.interview.rounds, INDUSTRY_INTERVIEW_MAX_ROUNDS)} / ${INDUSTRY_INTERVIEW_MAX_ROUNDS} 轮`;
+  }
+}
+
+async function streamIndustryRequest({ mode, step, interview, signal, onDelta, onRollback, onUsage }) {
+  const task = industryTask();
+  if (!task) throw new Error("行业分析任务不存在。");
+  const ind = task.industry;
+  const body = { mode, provider: { id: state.settings.provider, apiKey: state.settings.apiKey || "", model: state.settings.model || "" }, maxTokens: 8192 };
+  if (mode === "interview") {
+    body.steps = ind.steps.filter(Boolean).map(item => item.text);
+    body.interview = interview;
+  } else {
+    body.step = step;
+    body.industry = ind.industryName;
+    body.boundary = ind.boundary || "";
+    body.steps = ind.steps.slice(0, step).filter(item => item && item.status === "done").map(item => item.text);
+  }
+  const response = await fetch(`${API_BASE}/api/industry/stream`, { method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!response.ok || !response.body) {
+    const data = await response.json().catch(() => ({}));
+    const error = new Error(data?.error?.message || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "", finishReason = "stop";
+  const handleEvent = rawEvent => {
+    for (const line of rawEvent.split("\n")) {
+      if (!line.startsWith("data:")) continue;
+      let event = null;
+      try { event = JSON.parse(line.slice(5).trim()); } catch { continue; }
+      if (event.type === "delta") onDelta(event.text || "");
+      else if (event.type === "rollback") onRollback(event.chars || 0);
+      else if (event.type === "usage") onUsage(event);
+      else if (event.type === "done") finishReason = event.finishReason || "stop";
+      else if (event.type === "error") throw new Error(event.message || "行业分析步骤执行失败。");
+    }
+  };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let separator;
+      while ((separator = buffer.indexOf("\n\n")) >= 0) {
+        handleEvent(buffer.slice(0, separator));
+        buffer = buffer.slice(separator + 2);
+      }
+    }
+    if (buffer.trim()) handleEvent(buffer);
+  } finally { reader.cancel().catch(() => {}); }
+  return finishReason;
+}
+
+function beginIndustryRun(task) {
+  task.status = "running";
+  state.run = { taskId: task.id, input: task.industry.industryName, type: "industry" };
+  state.connectionStatus = hasConnection() ? "pending" : state.connectionStatus;
+  persist(); renderApp();
+  startIndustryTimer();
+}
+
+function startIndustry(input) {
+  if (state.run) return;
+  if (!hasConnection()) {
+    state.connectionStatus = "error";
+    state.connectionMessage = "连接信息不完整。请先在连接设置中选择模型通道并填写 API Key。";
+    renderApp(); toast(state.connectionMessage, "error"); return;
+  }
+  const project = currentProject();
+  const task = { id: uid("task"), type: "industry", title: `行业分析 · ${input}`, input, status: "running", createdAt: now(), updatedAt: now(), industry: freshIndustry(input), versions: [] };
+  project.tasks.push(task);
+  project.selectedTaskId = task.id;
+  state.draftInput = input;
+  updateProject(project, {});
+  beginIndustryRun(task);
+  toast(`开始分析「${input}」：先切分边界。`, "success");
+  runIndustryStep(0);
+}
+
+async function runIndustryStep(index) {
+  const task = industryTask();
+  if (!task || !state.run) return;
+  const ind = task.industry;
+  ind.steps[index] = { status: "running", text: "", tokens: 0 };
+  ind.activeStep = index;
+  ind.phase = index === 0 ? "s0" : "running";
+  ind.railMessage = index === 0
+    ? "Step 0 · 边界切分：正在识别同名行业…"
+    : `Step ${index} · ${INDUSTRY_RAIL_STEPS[index]} 生成中…（每步携带全部历史，后面的步骤会引用前面的结论）`;
+  persist(); renderApp();
+  document.getElementById(`industryCard${index}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  industryController = new AbortController();
+  try {
+    const finishReason = await streamIndustryRequest({
+      mode: "step",
+      step: index,
+      signal: industryController.signal,
+      onDelta: chunk => { ind.steps[index].text += chunk; queueIndustryPatch(); },
+      onRollback: chars => { ind.steps[index].text = ind.steps[index].text.slice(0, chars); queueIndustryPatch(); },
+      onUsage: usage => { ind.tokens.in += usage.input || 0; ind.tokens.out += usage.output || 0; ind.steps[index].tokens = usage.output || 0; queueIndustryPatch(); }
+    });
+    ind.steps[index].status = "done";
+    task.updatedAt = now();
+    if (index === 0) {
+      ind.candidates = parseIndustryCandidates(ind.steps[0].text);
+      ind.steps[0].status = "awaiting";
+      ind.phase = "awaiting";
+      ind.railMessage = ind.candidates.length
+        ? "请选择一个候选边界，或输入自定义边界。选定后自动继续四步。"
+        : "候选解析失败，请直接输入自定义边界。";
+      state.connectionStatus = "connected";
+      state.connectionMessage = "边界切分完成，等待选择边界";
+      persist(); renderApp();
+    } else if (index < 4) {
+      if (finishReason === "length") ind.railMessage = `Step ${index} 输出可能被截断（达到 max_tokens），已保留内容并继续。`;
+      persist();
+      runIndustryStep(index + 1);
+    } else {
+      ind.phase = "done";
+      ind.railMessage = finishReason === "length"
+        ? "四步已完成（末步可能被截断）。可进入「从业者拷问」或导出 .md。"
+        : "四步已完成。可进入「从业者拷问」，专攻报告里的 B / C 档字段；或导出 .md。";
+      finishIndustryRun("completed");
+    }
+  } catch (error) {
+    const aborted = error.name === "AbortError" || error.cancelled;
+    ind.steps[index].status = aborted ? "stopped" : "failed";
+    ind.phase = "paused";
+    ind.railMessage = aborted
+      ? "已手动停止。可重试本步并继续，前面步骤的上下文仍在。"
+      : `Step ${index + 1} 执行失败：${error.message || "未知错误"}`;
+    state.connectionStatus = aborted ? state.connectionStatus : "error";
+    state.connectionMessage = aborted ? "已停止" : (error.message || "行业分析步骤失败。");
+    state.run = null;
+    task.updatedAt = now();
+    stopIndustryTimer();
+    persist(); renderApp();
+    toast(aborted ? "行业分析已停止，可重试本步并继续。" : `行业分析失败：${error.message || "请检查连接后重试。"}`, aborted ? "" : "error");
+  } finally { industryController = null; }
+}
+
+function finishIndustryRun(kind) {
+  const task = industryTask();
+  if (!task) return;
+  task.status = kind;
+  task.updatedAt = now();
+  state.run = null;
+  state.connectionStatus = "connected";
+  state.connectionMessage = "行业分析已完成";
+  stopIndustryTimer();
+  persist(); renderApp();
+  document.getElementById("industryCard5")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  toast("行业分析完成，可导出 .md 或进入拷问模式。", "success");
+}
+
+function chooseIndustryCandidate(index) {
+  const task = industryTask();
+  if (!task || task.industry.phase !== "awaiting") return;
+  const candidate = task.industry.candidates[index];
+  if (candidate) confirmIndustryBoundary(candidate.choice);
+}
+
+function confirmIndustryCustom() {
+  const text = (document.getElementById("industryCustomBoundary")?.value || "").trim();
+  if (!text) { toast("请选择候选边界，或填写自定义边界。", "error"); return; }
+  confirmIndustryBoundary(text);
+}
+
+function confirmIndustryBoundary(boundary) {
+  const task = industryTask();
+  if (!task || task.industry.phase !== "awaiting") return;
+  const ind = task.industry;
+  ind.boundary = boundary;
+  ind.steps[0].status = "done";
+  ind.phase = "running";
+  ind.railMessage = `边界已确认：${boundary.length > 60 ? `${boundary.slice(0, 60)}…` : boundary} · 开始四步分析`;
+  state.connectionMessage = "已确认边界，继续四步分析";
+  if (!state.run) beginIndustryRun(task); else { persist(); renderApp(); }
+  runIndustryStep(1);
+}
+
+function retryIndustryStep(index) {
+  if (state.run) return;
+  const task = industryTask();
+  if (!task) return;
+  task.industry.steps[index] = null;
+  beginIndustryRun(task);
+  runIndustryStep(index);
+}
+
+function startIndustryInterview() {
+  const task = industryTask();
+  if (!task || task.industry.phase !== "done" || state.run) return;
+  const ind = task.industry;
+  ind.interview = { open: true, rounds: 0, finished: false, streaming: true, messages: [{ role: "user", content: INDUSTRY_INTERVIEW_SENTINEL }, { role: "assistant", content: "" }] };
+  ind.phase = "interview";
+  ind.railMessage = "拷问模式：模型只攻击报告里心虚的地方，一次最多三句话。";
+  beginIndustryRun(task);
+  document.getElementById("industryCard5")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  streamIndustryTurn();
+}
+
+function sendIndustryChat() {
+  const input = document.getElementById("industryChatInput");
+  const text = (input?.value || "").trim();
+  const task = industryTask();
+  if (!task || !text || state.run || task.industry.interview.streaming || task.industry.interview.finished) return;
+  input.value = "";
+  const ind = task.industry;
+  ind.interview.messages.push({ role: "user", content: text });
+  ind.interview.rounds += 1;
+  if (ind.interview.rounds >= INDUSTRY_INTERVIEW_MAX_ROUNDS) ind.interview.messages.push({ role: "user", content: INDUSTRY_INTERVIEW_DIAGNOSTIC_SENTINEL, hidden: true });
+  ind.interview.messages.push({ role: "assistant", content: "" });
+  ind.interview.streaming = true;
+  ind.railMessage = ind.interview.rounds >= INDUSTRY_INTERVIEW_MAX_ROUNDS
+    ? `已满 ${INDUSTRY_INTERVIEW_MAX_ROUNDS} 轮，模型正在跳出角色输出诊断…`
+    : `第 ${ind.interview.rounds} 轮 · 内行思考中…`;
+  beginIndustryRun(task);
+  streamIndustryTurn();
+}
+
+async function streamIndustryTurn() {
+  const task = industryTask();
+  if (!task) return;
+  const ind = task.industry;
+  industryController = new AbortController();
+  try {
+    await streamIndustryRequest({
+      mode: "interview",
+      signal: industryController.signal,
+      interview: ind.interview.messages.map(message => ({ role: message.role, content: message.content })),
+      onDelta: chunk => { ind.interview.messages.at(-1).content += chunk; queueIndustryPatch(); },
+      onRollback: chars => { const last = ind.interview.messages.at(-1); last.content = last.content.slice(0, chars); queueIndustryPatch(); },
+      onUsage: usage => { ind.tokens.in += usage.input || 0; ind.tokens.out += usage.output || 0; queueIndustryPatch(); }
+    });
+    ind.interview.streaming = false;
+    task.status = "completed";
+    state.run = null;
+    stopIndustryTimer();
+    if (ind.interview.rounds >= INDUSTRY_INTERVIEW_MAX_ROUNDS) {
+      ind.interview.finished = true;
+      ind.railMessage = "拷问结束，模型已给出诊断。诊断会随全文一起导出。";
+      persist(); renderApp();
+      toast("拷问完成，诊断已生成，可随全文导出。", "success");
+    } else {
+      ind.railMessage = `第 ${ind.interview.rounds} 轮结束，继续回答或导出。`;
+      persist(); renderApp();
+      document.getElementById("industryChatInput")?.focus();
+    }
+  } catch (error) {
+    ind.interview.streaming = false;
+    const last = ind.interview.messages.at(-1);
+    if (last?.role === "assistant" && !last.content.trim()) ind.interview.messages.pop();
+    state.run = null;
+    stopIndustryTimer();
+    persist(); renderApp();
+    toast(error.name === "AbortError" || error.cancelled ? "拷问已停止，可继续提问或导出。" : `拷问中断：${error.message || "请重试。"}`, "error");
+  } finally { industryController = null; }
+}
+
+async function exportIndustryMarkdown() {
+  const task = industryTask();
+  if (!task) return;
+  const ind = task.industry;
+  const labels = ["Step 0 · 边界切分", "Step 1 · 结构层", "Step 2 · 三条流转链", "Step 3 · 议价能力", "Step 4 · 约束 / 节奏 / 异常"];
+  if (!ind.steps.some(step => step?.text)) { toast("还没有可导出的内容，先运行一次分析。", "error"); return; }
+  const parts = [`# 行业分析：${ind.industryName}`, "", `> 边界：${ind.boundary || "（未选择）"}`, ""];
+  ind.steps.forEach((step, index) => { if (step?.text) parts.push(`## ${labels[index]}`, "", step.text, ""); });
+  const chat = ind.interview.messages.filter(message => !message.hidden && message.content !== INDUSTRY_INTERVIEW_SENTINEL);
+  if (chat.length) {
+    parts.push("## Step 5 · 从业者拷问记录", "");
+    for (const message of chat) parts.push(`- **${message.role === "user" ? "你" : "内行"}**：${message.content.replace(/\n/g, " ")}`);
+  }
+  const blob = new Blob([parts.join("\n")], { type: "text/markdown;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `行业分析-${ind.industryName}.md`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+  toast("已导出 .md（各节标题 + 原文 + 拷问记录）。", "success");
 }
 
 function renderMain(project) {
@@ -342,7 +865,8 @@ function bindAfterRender() {
   if (input) input.addEventListener("input", event => {
     state.draftInput = event.target.value;
     const count = document.getElementById("charCount");
-    if (count) count.textContent = `${event.target.value.length.toLocaleString("zh-CN")} / 5,000`;
+    const maxLen = selectedType() === "industry" ? INDUSTRY_INPUT_MAX : 5000;
+    if (count) count.textContent = `${event.target.value.length.toLocaleString("zh-CN")} / ${maxLen.toLocaleString("zh-CN")}`;
   });
   const search = document.getElementById("searchInput");
   if (search) search.addEventListener("input", event => { state.search = event.target.value; renderApp(); const next = document.getElementById("searchInput"); next?.focus(); next?.setSelectionRange(next.value.length, next.value.length); });
@@ -358,6 +882,10 @@ function bindAfterRender() {
   });
   const backdrop = document.querySelector(".modal-backdrop");
   if (backdrop) backdrop.addEventListener("click", event => { if (event.target === backdrop) { state.modal = null; persist(); renderApp(); } });
+  const chatInput = document.getElementById("industryChatInput");
+  if (chatInput) chatInput.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); sendIndustryChat(); } });
+  const boundaryInput = document.getElementById("industryCustomBoundary");
+  if (boundaryInput) boundaryInput.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); confirmIndustryCustom(); } });
 }
 
 function toast(message, type = "") {
@@ -391,6 +919,7 @@ async function startAnalysis(inputOverride = null, typeOverride = null) {
   const input = normalizeText(inputOverride ?? state.draftInput);
   const type = typeOverride || selectedType();
   if (!input) { toast("请先描述当前业务任务，再开始分析。", "error"); document.getElementById("taskInput")?.focus(); return; }
+  if (type === "industry") return startIndustry(input);
   const reusableTask = state.resumeTaskId ? project.tasks.find(item => item.id === state.resumeTaskId) : null;
   const task = reusableTask || ensureTask(project, input, type);
   if (reusableTask) { task.type = type; task.input = input; task.status = "running"; task.updatedAt = now(); project.selectedTaskId = task.id; }
@@ -482,6 +1011,17 @@ function finishRun(result) {
 
 function cancelRun(showToast = true) {
   if (!state.run) return;
+  if (state.run.type === "industry") {
+    if (industryController) { industryController.abort(); if (showToast) toast("正在停止当前步骤…"); return; }
+    // 没有正在流式的步骤（如等待选择边界）：干净取消，已生成内容保留，之后仍可选边界续跑
+    const task = industryTask();
+    state.run = null;
+    stopIndustryTimer();
+    if (task && task.industry.phase === "awaiting") { task.status = "cancelled"; task.updatedAt = now(); }
+    persist(); renderApp();
+    if (showToast) toast("已取消本次运行。已生成的内容保留，选择边界后可继续。");
+    return;
+  }
   runController?.abort(); clearInterval(runTimer); runTimer = null;
   const project = currentProject(); const task = project.tasks.find(item => item.id === state.run.taskId);
   if (task) { task.status = "cancelled"; task.updatedAt = now(); }
@@ -568,6 +1108,12 @@ document.addEventListener("click", event => {
   else if (action === "delete-version") deleteVersion(actionElement.dataset.versionId);
   else if (action === "retry-task") retryTask();
   else if (action === "continue-followup") continueFollowup();
+  else if (action === "industry-choose-candidate") chooseIndustryCandidate(Number(actionElement.dataset.candidate));
+  else if (action === "industry-confirm-custom") confirmIndustryCustom();
+  else if (action === "industry-start-interview") startIndustryInterview();
+  else if (action === "industry-send-chat") sendIndustryChat();
+  else if (action === "retry-industry-step") retryIndustryStep(Number(actionElement.dataset.step));
+  else if (action === "export-industry") exportIndustryMarkdown();
 });
 
 document.addEventListener("submit", event => {
