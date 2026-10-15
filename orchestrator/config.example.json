@@ -1,5 +1,6 @@
 {
-  "说明": "把本文件改名为 config.local.json 后生效。API Key 也可以只在前端“连接设置”里填写（保存在浏览器本地），两边都不填则只能用 mock 通道。",
+  "说明": "把本文件复制为 config.local.json 后生效（已被 .gitignore 排除，不会提交）。apiKey 可以留空改由前端「连接设置」填写；authToken 用于公开部署时的访问门禁，设置后所有业务接口都要求页面里填相同的访问令牌。",
+  "authToken": "",
   "providers": {
     "deepseek": {
       "apiKey": "",

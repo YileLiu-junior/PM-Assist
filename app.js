@@ -1,7 +1,19 @@
 const STORAGE_KEY = "ai-pm-workbench-v1";
-// 编排服务地址：config.js 里可通过 window.ORCHESTRATOR_URL 覆盖（GitHub Pages 等跨域部署用）。
-// 同源访问为空串；非 http 环境（file:// 直接打开）回退到本机默认端口。
-const API_BASE = window.ORCHESTRATOR_URL || (location.protocol.startsWith("http") ? "" : "http://127.0.0.1:8787");
+// 编排服务地址：优先用连接设置里填的地址；其次 config.js 的部署级默认值；
+// 都没有时同源（部署到服务器直接访问）；file:// 打开则回退本机默认端口。
+function apiBase() {
+  const custom = normalizeText(state.settings?.serverUrl).replace(/\/+$/, "");
+  if (custom) return custom;
+  if (window.ORCHESTRATOR_URL) return String(window.ORCHESTRATOR_URL).replace(/\/+$/, "");
+  if (location.protocol.startsWith("http")) return "";
+  return "http://127.0.0.1:8787";
+}
+// 公开部署时服务端可设访问令牌（orchestrator/config.local.json 的 authToken 或环境变量 AUTH_TOKEN）
+function apiHeaders(extra = {}) {
+  const headers = { "Content-Type": "application/json", ...extra };
+  if (normalizeText(state.settings?.authToken)) headers["x-auth-token"] = normalizeText(state.settings.authToken);
+  return headers;
+}
 const RUN_TIMEOUT_MS = 300000;
 
 const TASK_TYPES = {
@@ -136,7 +148,7 @@ function createDemoState() {
   };
   return {
     projects: [{ id: demoProjectId, name: "零售 AI 客服 MVP", object: "零售电商售前、订单与售后服务", audience: "线上消费者、客服坐席、运营人员", stage: "需求分析", scope: "商品问答与订单状态查询", constraints: "订单变更必须确认身份和权限，处理失败后转人工", openQuestions: "高峰期咨询量、知识资料覆盖情况、人工接管时间", createdAt: demoVersion.createdAt, updatedAt: demoVersion.createdAt, selectedTaskId: demoTaskId, tasks: [task] }],
-    currentProjectId: demoProjectId, currentTaskType: "requirements", draftInput: "", resumeTaskId: null, search: "", modal: null, evidenceOpen: false, editing: null, connectionStatus: "idle", connectionMessage: "尚未配置模型通道", settings: { provider: "", apiKey: "", model: "" }
+    currentProjectId: demoProjectId, currentTaskType: "requirements", draftInput: "", resumeTaskId: null, search: "", modal: null, evidenceOpen: false, editing: null, connectionStatus: "idle", connectionMessage: "尚未配置模型通道", settings: { provider: "", apiKey: "", model: "", serverUrl: "", authToken: "" }
   };
 }
 
@@ -147,6 +159,7 @@ function loadState() {
       const saved = JSON.parse(raw);
       // 旧版本存的是 Coze workflowId + PAT，直接作废
       if (saved.settings && !saved.settings.provider) saved.settings = { provider: "", apiKey: "", model: "" };
+      saved.settings = { serverUrl: "", authToken: "", ...(saved.settings || {}) };
       if (saved.projects?.length) return normalizeLoadedState({ ...createDemoState(), ...saved, modal: null, evidenceOpen: false, editing: null });
     }
   } catch (error) { console.warn("Unable to load saved workspace", error); }
@@ -543,7 +556,7 @@ async function streamIndustryRequest({ mode, step, interview, signal, onDelta, o
     body.boundary = ind.boundary || "";
     body.steps = ind.steps.slice(0, step).filter(item => item && item.status === "done").map(item => item.text);
   }
-  const response = await fetch(`${API_BASE}/api/industry/stream`, { method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const response = await fetch(`${apiBase()}/api/industry/stream`, { method: "POST", signal, headers: apiHeaders(), body: JSON.stringify(body) });
   if (!response.ok || !response.body) {
     const data = await response.json().catch(() => ({}));
     const error = new Error(data?.error?.message || `HTTP ${response.status}`);
@@ -844,7 +857,7 @@ function renderSettingsModal() {
   const hasSettings = hasConnection();
   const providerOptions = Object.entries(PROVIDER_META).map(([id, item]) => `<option value="${id}" ${effectiveProvider === id ? "selected" : ""}>${item.label}</option>`).join("");
   const needsKey = effectiveProvider !== "mock";
-  return `<div class="modal-backdrop" data-action="close-modal"><section class="modal compact" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle" data-modal-content><div class="modal-header"><div><div class="section-kicker">Connection</div><h2 id="settingsModalTitle">连接设置</h2><p>选择模型通道并填写 API Key，测试后即可运行真实任务。任务由本地编排服务（node server.js）执行。</p></div><button class="icon-button" data-action="close-modal" aria-label="关闭">${renderIcon("x")}</button></div><form id="settingsForm"><div class="modal-body"><div class="form-field"><label for="provider">模型通道</label><select id="provider" name="provider">${providerOptions}</select><div class="form-hint" id="provider-hint" style="margin-top:7px">${escapeHTML(meta?.hint || "请选择一个模型通道。")}</div></div><div class="form-field" style="margin-top:14px"><label for="providerModel">模型 ID</label><input id="providerModel" name="model" autocomplete="off" value="${escapeHTML(state.settings?.model || meta?.defaultModel || "")}" placeholder="${escapeHTML(meta?.defaultModel || "")}" list="model-suggestions" /><datalist id="model-suggestions">${meta ? `<option value="${escapeHTML(meta.defaultModel)}"></option>` : ""}</datalist></div><div class="form-field" style="margin-top:14px"><label for="providerKey">API Key${needsKey ? "" : "（Mock 通道不需要）"}</label><input id="providerKey" name="apiKey" type="password" autocomplete="new-password" value="${escapeHTML(state.settings?.apiKey || "")}" placeholder="${needsKey ? "粘贴 API Key" : "无需填写"}" ${needsKey ? "" : "disabled"} /></div><div class="connection-box" style="margin-top:14px">API Key 只保存在当前浏览器（localStorage），仅用于请求本机编排服务；也可以改为在 orchestrator/config.local.json 中配置服务端 Key。${hasSettings ? " 当前设备已保存连接信息。" : ""}</div><div class="connection-result">${state.connectionMessage ? `<span class="connection-status ${connectionClass()}">${connectionLabel()}</span><div class="form-hint" style="margin-top:7px">${escapeHTML(state.connectionMessage)}</div>` : ""}</div></div><div class="modal-footer"><button class="button" type="button" data-action="test-connection">${renderIcon("settings")}测试连接</button><div class="modal-footer-actions"><button class="button" type="button" data-action="close-modal">关闭</button><button class="button primary" type="submit">保存设置</button></div></div></form></section></div>`;
+  return `<div class="modal-backdrop" data-action="close-modal"><section class="modal compact" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle" data-modal-content><div class="modal-header"><div><div class="section-kicker">Connection</div><h2 id="settingsModalTitle">连接设置</h2><p>选择模型通道并填写 API Key，测试后即可运行真实任务。任务由本地编排服务（node server.js）执行。</p></div><button class="icon-button" data-action="close-modal" aria-label="关闭">${renderIcon("x")}</button></div><form id="settingsForm"><div class="modal-body"><div class="form-field"><label for="provider">模型通道</label><select id="provider" name="provider">${providerOptions}</select><div class="form-hint" id="provider-hint" style="margin-top:7px">${escapeHTML(meta?.hint || "请选择一个模型通道。")}</div></div><div class="form-field" style="margin-top:14px"><label for="providerModel">模型 ID</label><input id="providerModel" name="model" autocomplete="off" value="${escapeHTML(state.settings?.model || meta?.defaultModel || "")}" placeholder="${escapeHTML(meta?.defaultModel || "")}" list="model-suggestions" /><datalist id="model-suggestions">${meta ? `<option value="${escapeHTML(meta.defaultModel)}"></option>` : ""}</datalist></div><div class="form-field" style="margin-top:14px"><label for="providerKey">API Key${needsKey ? "" : "（Mock 通道不需要）"}</label><input id="providerKey" name="apiKey" type="password" autocomplete="new-password" value="${escapeHTML(state.settings?.apiKey || "")}" placeholder="${needsKey ? "粘贴 API Key" : "无需填写"}" ${needsKey ? "" : "disabled"} /></div><div class="form-field" style="margin-top:14px"><label for="serverUrl">编排服务地址（可选）</label><input id="serverUrl" name="serverUrl" autocomplete="off" value="${escapeHTML(state.settings?.serverUrl || "")}" placeholder="留空 = 与页面同源；前端在 GitHub Pages 时填 http://127.0.0.1:8787" /></div><div class="form-field" style="margin-top:14px"><label for="authToken">访问令牌（可选）</label><input id="authToken" name="authToken" type="password" autocomplete="new-password" value="${escapeHTML(state.settings?.authToken || "")}" placeholder="仅当编排服务设置了 authToken 时需要填写" /></div><div class="connection-box" style="margin-top:14px">API Key 只保存在当前浏览器（localStorage），不会写入仓库；服务端 Key 和访问令牌在 orchestrator/config.local.json 中配置（不参与 git 提交）。${hasSettings ? " 当前设备已保存连接信息。" : ""}</div><div class="connection-result">${state.connectionMessage ? `<span class="connection-status ${connectionClass()}">${connectionLabel()}</span><div class="form-hint" style="margin-top:7px">${escapeHTML(state.connectionMessage)}</div>` : ""}</div></div><div class="modal-footer"><button class="button" type="button" data-action="test-connection">${renderIcon("settings")}测试连接</button><div class="modal-footer-actions"><button class="button" type="button" data-action="close-modal">关闭</button><button class="button primary" type="submit">保存设置</button></div></div></form></section></div>`;
 }
 
 function renderHelpModal() {
@@ -953,7 +966,7 @@ async function callOrchestrator(project, input, type) {
   runController = controller;
   const timeout = setTimeout(() => controller.abort(), RUN_TIMEOUT_MS);
   try {
-    const response = await fetch(`${API_BASE}/api/run`, { method: "POST", signal: controller.signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+    const response = await fetch(`${apiBase()}/api/run`, { method: "POST", signal: controller.signal, headers: apiHeaders(), body: JSON.stringify({
       input,
       task_hint: type === "smart" ? "" : type,
       project: { name: project.name, object: project.object, audience: project.audience, stage: project.stage, scope: project.scope, constraints: project.constraints, openQuestions: project.openQuestions },
@@ -969,7 +982,7 @@ async function callOrchestrator(project, input, type) {
 function friendlyConnectionError(error) {
   if (error.name === "AbortError") return "等待时间过长，任务已超时取消。可在连接设置中检查模型通道，或重试。";
   if (error.message?.includes("Failed to fetch") || error.message?.includes("NetworkError") || error.message?.includes("fetch failed")) return "无法连接本地编排服务。请先在项目目录运行 node server.js，再刷新页面。";
-  if (error.status === 401 || error.status === 403) return "API Key 无效或没有权限，请在连接设置中检查。";
+  if (error.status === 401 || error.status === 403) return "身份校验失败：请检查 API Key 以及连接设置中的访问令牌。";
   if (error.status === 402 || error.status === 429) return "模型账户额度不足或触发限流，请检查服务商控制台。";
   if (error.status === 404) return "模型 ID 不存在，请在连接设置中确认模型名称。";
   if (error.status >= 500) return `执行失败${error.node ? `（${error.node}）` : ""}：${error.message || "编排服务暂时不可用。"}`;
@@ -1044,7 +1057,13 @@ function saveProjectForm(form) {
 function saveSettingsForm(form) {
   const data = Object.fromEntries(new FormData(form).entries());
   const provider = normalizeText(data.provider);
-  state.settings = { provider, apiKey: provider === "mock" ? "" : normalizeText(data.apiKey), model: normalizeText(data.model) || PROVIDER_META[provider]?.defaultModel || "" };
+  state.settings = {
+    provider,
+    apiKey: provider === "mock" ? "" : normalizeText(data.apiKey),
+    model: normalizeText(data.model) || PROVIDER_META[provider]?.defaultModel || "",
+    serverUrl: normalizeText(data.serverUrl),
+    authToken: normalizeText(data.authToken)
+  };
   state.connectionStatus = "idle";
   state.connectionMessage = hasConnection() ? (provider === "mock" ? "Mock 通道可用，可直接运行任务" : "已保存，请测试连接") : "尚未配置模型通道";
   state.modal = null; persist(); renderApp(); toast("连接设置已保存。", "success");
@@ -1054,15 +1073,22 @@ async function testConnection() {
   const form = document.getElementById("settingsForm"); if (!form) return;
   const data = Object.fromEntries(new FormData(form).entries());
   const provider = normalizeText(data.provider);
-  const settings = { provider, apiKey: provider === "mock" ? "" : normalizeText(data.apiKey), model: normalizeText(data.model) || PROVIDER_META[provider]?.defaultModel || "" };
+  const settings = {
+    provider,
+    apiKey: provider === "mock" ? "" : normalizeText(data.apiKey),
+    model: normalizeText(data.model) || PROVIDER_META[provider]?.defaultModel || "",
+    serverUrl: normalizeText(data.serverUrl),
+    authToken: normalizeText(data.authToken)
+  };
   if (!settings.provider || (provider !== "mock" && !settings.apiKey)) { state.connectionStatus = "error"; state.connectionMessage = "连接信息不完整，请选择通道并填写 API Key。"; renderApp(); showSettings(); return; }
   state.settings = settings; state.connectionStatus = "pending"; state.connectionMessage = "正在测试连接…"; persist(); renderApp(); showSettings();
   try {
-    const response = await fetch(`${API_BASE}/api/test`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: { id: settings.provider, apiKey: settings.apiKey, model: settings.model } }) });
+    const response = await fetch(`${apiBase()}/api/test`, { method: "POST", headers: apiHeaders(), body: JSON.stringify({ provider: { id: settings.provider, apiKey: settings.apiKey, model: settings.model } }) });
+    if (response.status === 401) { state.connectionStatus = "error"; state.connectionMessage = "访问令牌不正确，请在下方「访问令牌」中填写服务端设置的 authToken。"; persist(); renderApp(); showSettings(); return; }
     const outcome = await response.json().catch(() => ({}));
     state.connectionStatus = outcome.ok ? "connected" : "error";
     state.connectionMessage = outcome.message || (outcome.ok ? "连接成功。" : "连接失败。");
-  } catch { state.connectionStatus = "error"; state.connectionMessage = "无法连接本地编排服务。请先运行 node server.js。"; }
+  } catch { state.connectionStatus = "error"; state.connectionMessage = "无法连接编排服务。请确认服务地址是否正确、服务是否已启动。"; }
   persist(); renderApp(); showSettings();
 }
 

@@ -204,13 +204,19 @@ const server = http.createServer((req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Headers": "Content-Type, x-auth-token",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
     });
     res.end();
     return;
   }
   const urlPath = req.url || "/";
+  // 设置了访问令牌（AUTH_TOKEN / config.local.json authToken）时，业务接口一律校验
+  const requiredToken = providers.getAuthToken();
+  if (requiredToken && req.headers["x-auth-token"] !== requiredToken) {
+    sendJSON(res, 401, { ok: false, error: { message: "访问令牌缺失或不正确。请在页面「连接设置 → 访问令牌」中填写服务端部署时设置的 authToken。" } });
+    return;
+  }
   if (req.method === "POST" && urlPath.startsWith("/api/run")) { handleRun(req, res).catch(error => sendJSON(res, 500, { ok: false, error: { message: error.message } })); return; }
   if (req.method === "POST" && urlPath.startsWith("/api/test")) { handleTest(req, res).catch(error => sendJSON(res, 500, { ok: false, error: { message: error.message } })); return; }
   if (req.method === "POST" && urlPath.startsWith("/api/industry/stream")) { handleIndustryStream(req, res).catch(error => { if (!res.writableEnded) { sendJSON(res, 500, { ok: false, error: { message: error.message } }); } }); return; }
@@ -230,8 +236,9 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, HOST, () => {
   const status = knowledge.status();
-  console.log("AI 产品经理工作台 · 本地编排服务已启动");
+  console.log("AI 产品经理工作台 · 编排服务已启动");
   console.log(`  前端地址   http://${HOST}:${PORT}`);
   console.log(`  知识库     ${status.docs} 个文档 / ${status.chunks} 个片段（目录 orchestrator/knowledge/）`);
   console.log("  模型通道   deepseek（deepseek-flash）· zhipu（glm-5.3-flash）· mock（离线测试）");
+  console.log(`  访问保护   ${providers.getAuthToken() ? "已开启访问令牌校验" : "未设令牌（仅建议本机使用；公开部署务必设置 AUTH_TOKEN）"}`);
 });

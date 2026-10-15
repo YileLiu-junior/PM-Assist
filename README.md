@@ -48,15 +48,18 @@ server.js ── orchestrator/flow.js              流程编排（对应 Coze Ch
 | `GET /api/knowledge` | 知识库索引状态 |
 | `GET /api/health` | 服务与通道概览 |
 
-## 部署到 GitHub Pages
+## 部署
 
-GitHub Pages 只能托管静态前端，编排服务（Node）需要另行运行：
+想得到**国内可长久访问的公开链接**（香港服务器 / 国内服务器 + 备案，含成本与步骤），看 [DEPLOY.md](DEPLOY.md)。
 
-1. 把 `config.js` 里的 `window.ORCHESTRATOR_URL` 改成编排服务的公网地址
-   （例如部署在 Render/Railway/自己的 VPS 上）；如果只是自己用，也可以保持前端
-   在 Pages、编排服务跑在本机，然后填 `http://127.0.0.1:8787`。
+GitHub Pages 只能托管静态前端，编排服务（Node）需要另行运行；前端也可以留在 Pages、
+在页面「连接设置 → 编排服务地址」里指向任何一台编排服务：
+
+1. 前端在 Pages、编排服务跑在本机：服务地址填 `http://127.0.0.1:8787`。
 2. 仓库设置 → Pages → 选择分支部署即可，入口是 `index.html`。
 3. 注意：提示词集中在 `orchestrator/prompts.js`，公开仓库等于公开这套提示词设计。
+4. 公开部署务必设置访问令牌（`AUTH_TOKEN` 环境变量或 `config.local.json` 的 `authToken`），
+   并在页面「连接设置 → 访问令牌」填同一串字符。
 
 ## 流程说明
 

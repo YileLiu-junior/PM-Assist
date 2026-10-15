@@ -46,6 +46,12 @@ function resolveCredentials(providerId, requestProvider) {
   };
 }
 
+// 公开部署时的访问令牌：环境变量 AUTH_TOKEN 优先，其次 config.local.json 的 authToken。
+// 未设置时接口不做鉴权（本机使用）。
+function getAuthToken() {
+  return String(process.env.AUTH_TOKEN || localConfig.authToken || "").trim();
+}
+
 // 单次对话调用。opts: {messages, temperature, topP, maxTokens, json, timeoutMs, signal}
 async function chat(credentials, opts) {
   const { meta } = credentials;
@@ -323,4 +329,4 @@ function mockIntent(userText) {
   };
 }
 
-module.exports = { PROVIDERS, resolveCredentials, chat, streamChat, testConnection };
+module.exports = { PROVIDERS, resolveCredentials, chat, streamChat, testConnection, getAuthToken };
